@@ -45,12 +45,12 @@ def status_report(name, robot_type, hp, max_hp, battery):
     """TODO(Q1)：一行自检报告字符串；档位判定与逐字符格式见题面 Q1 规范。"""
     hp_pct = hp_ratio(hp, max_hp)
 
-    if battery >= 50:
-        level = "OK"
-    elif battery >= 20:
+    if battery < 20:
+        level = "LOW"
+    elif battery < 60:
         level = "WARNING"
     else:
-        level = "LOW"
+        level = "OK"
 
     return f"{name:<10}|{robot_type:^10}|HP {hp_pct:>3}%|BAT {battery:>3}%|{level}"
 
