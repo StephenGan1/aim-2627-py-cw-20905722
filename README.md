@@ -68,3 +68,36 @@ python main.py
 
 CI 只允许修改 `src/main/**`、`README.md` 与 `.agent-sessions/**`（AI 会话归档）——其余文件改了直接红；autopep8 `--diff` 非空即败。提交方式（push、问卷、commit 粒度）见题面"提交与验收"一节。
 
+## Q7 Debug 分析
+
+在 `src/main/legacy_patrol.py` 中定位并修复了 6 处问题：
+
+1. `total_route_meters`
+   - 问题：`segment_length_cm()` 返回厘米，但函数要求返回米，原代码直接累加后返回，单位错误。
+   - 定位：根据函数 docstring 中的单位要求，结合路线测试发现结果放大了 100 倍。
+   - 修复：每段距离除以 100 后再累计。
+
+2. `calibrate`
+   - 问题：当样本为空或没有正数时，`first_positive()` 返回 `None`，之后执行 `s - baseline` 会产生异常。
+   - 定位：检查 `first_positive()` 的返回契约，并测试空列表和全负数输入。
+   - 修复：当 `baseline is None` 时直接返回 0。
+
+3. `summarize_events`
+   - 问题：题目要求统计 `id` 不超过 `max_id` 的事件，原代码使用 `< max_id`，漏掉了 `id == max_id`。
+   - 定位：可见测试中 `max_id=2` 时应同时统计 id 1 和 id 2。
+   - 修复：将 `<` 改为 `<=`。
+
+4. `log`
+   - 问题：使用 `history=[]` 作为默认参数，列表会在多次函数调用之间共享。
+   - 定位：连续调用 `log("a")` 和 `log("b")` 时发现第二次调用保留了第一次的内容。
+   - 修复：默认参数改为 `None`，每次未提供 history 时新建空列表。
+
+5. `run_legacy_sim` 轮数没有递增
+   - 问题：循环中缺少 `round_ += 1`，导致轮号一直为 0，可能无法正常结束。
+   - 定位：检查 while 循环变量后发现 `round_` 没有更新。
+   - 修复：每轮结束后增加 `round_ += 1`。
+
+6. `run_legacy_sim` 终止条件写反
+   - 问题：原代码在 `stamina > 20` 时 break，与契约“体力 <= 20 时停止”相反。
+   - 定位：根据函数 docstring 和阈值测试对照判断。
+   - 修复：改为 `if stamina <= 20: break`。
