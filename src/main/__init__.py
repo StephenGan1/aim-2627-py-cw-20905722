@@ -61,12 +61,123 @@ def status_report(name, robot_type, hp, max_hp, battery):
 def analyze_damage_log(lines):
     """TODO(Q2)：解析混合格式伤害日志，返回固定契约的统计 dict；
     行格式、去重与统计口径见题面 Q2 规范。"""
-    raise NotImplementedError("Q2 analyze_damage_log：题面 Q2·多源日志解析与统计")
+    total = 0
+    by_armor = {
+        "front": 0,
+        "left": 0,
+        "right": 0
+    }
 
+    seen_ids = []
+    event_count = 0
+
+    armor_map = {
+        "F": "front",
+        "L": "left",
+        "R": "right"
+    }
+
+    for raw_line in lines:
+        if not isinstance(raw_line, str):
+            continue
+
+        line = raw_line.strip()
+
+        if not line or line.startswith("#"):
+            continue
+
+        # JSON 日志
+        if line.startswith("{"):
+            try:
+                data = json.loads(line)
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+            if not isinstance(data, dict):
+                continue
+
+            armor = data.get("armor")
+            damage = data.get("damage")
+
+            if armor not in by_armor:
+                continue
+
+            if type(damage) is not int or damage <= 0:
+                continue
+
+            if "id" in data:
+                event_id = data["id"]
+
+                if event_id in seen_ids:
+                    continue
+
+                seen_ids.append(event_id)
+
+            by_armor[armor] += damage
+            total += damage
+            event_count += 1
+            continue
+
+        # 传感器日志，例如 F:32,L:5,R:12
+        parts = line.split(",")
+        damages = []
+        valid = True
+
+        for part in parts:
+            part = part.strip()
+
+            if ":" not in part:
+                valid = False
+                break
+
+            key, value = part.split(":", 1)
+
+            key = key.strip()
+            value = value.strip()
+
+            if key not in armor_map:
+                valid = False
+                break
+
+            if not value.isdigit():
+                valid = False
+                break
+
+            damage = int(value)
+
+            if damage <= 0:
+                valid = False
+                break
+
+            damages.append((armor_map[key], damage))
+
+        if not valid or not damages:
+            continue
+
+        for armor, damage in damages:
+            by_armor[armor] += damage
+            total += damage
+            event_count += 1
+
+    if event_count == 0:
+        most_hit = None
+        avg = 0.0
+    else:
+        most_hit = max(by_armor, key=by_armor.get)
+        avg = round(total / event_count, 2)
+
+    return {
+        "total": total,
+        "by_armor": by_armor,
+        "most_hit": most_hit,
+        "avg": avg
+    }
 
 # ---------------------------------------------------------------------------
 # Q3 SentryGrid（题面 Q3·载体物理规则）
 # ---------------------------------------------------------------------------
+
+
 class SentryGrid:
     """哨兵仿真载体（构造与只读属性已提供；四个 TODO 方法由你实现）。"""
 
@@ -150,21 +261,49 @@ class SentryGrid:
 
     @current_pos.setter
     def current_pos(self, value):
-        """TODO(Q3)：位置 setter；三重输入校验见题面 Q3 规范第 1 条。"""
-        raise NotImplementedError("Q3 current_pos.setter：题面 Q3·位置校验三步")
+        if not isinstance(value, (tuple, list)) or len(value) != 2:
+            raise TypeError("current_pos 需要长度为 2 的 tuple/list")
+
+        self._pos = self._clamp_cell(value)
 
     def move_forward(self):
-        """TODO(Q3)：朝当前 facing 前进一格，返回执行后的位置；
-        碰撞、耗电与断电语义见题面 Q3 规范。"""
-        raise NotImplementedError("Q3 move_forward：题面 Q3·前进、碰撞与断电")
+        if self._fuel <= 0:
+            return self._pos
+
+        self._fuel -= 1
+
+        dx, dy = self._facing.delta
+        new_x = self._pos[0] + dx
+        new_y = self._pos[1] + dy
+
+        if self.is_blocked(new_x, new_y):
+            self._collision_count += 1
+            return self._pos
+
+        self._pos = (new_x, new_y)
+        return self._pos
 
     def turn_left(self):
-        """TODO(Q3)：原地左转 90°，返回新的 Facing（不耗电）。"""
-        raise NotImplementedError("Q3 turn_left")
+        left_turn = {
+            Facing.UP: Facing.LEFT,
+            Facing.LEFT: Facing.DOWN,
+            Facing.DOWN: Facing.RIGHT,
+            Facing.RIGHT: Facing.UP
+        }
+
+        self._facing = left_turn[self._facing]
+        return self._facing
 
     def turn_right(self):
-        """TODO(Q3)：原地右转 90°，返回新的 Facing（不耗电）。"""
-        raise NotImplementedError("Q3 turn_right")
+        right_turn = {
+            Facing.UP: Facing.RIGHT,
+            Facing.RIGHT: Facing.DOWN,
+            Facing.DOWN: Facing.LEFT,
+            Facing.LEFT: Facing.UP
+        }
+
+        self._facing = right_turn[self._facing]
+        return self._facing
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +312,38 @@ class SentryGrid:
 def next_step_toward(pos, target, obstacles, current_facing=Facing.UP):
     """TODO(Q4)：返回下一步应朝向的 Facing；
     候选判定、优先级与回退规则见题面 Q4 规范。"""
-    raise NotImplementedError("Q4 next_step_toward：题面 Q4·贪心策略与回退")
+
+    x, y = pos
+    tx, ty = target
+
+    if pos == target:
+        return current_facing
+
+    dx = tx - x
+    dy = ty - y
+
+    candidates = []
+
+    if dx > 0:
+        candidates.append((abs(dx), Facing.RIGHT))
+    elif dx < 0:
+        candidates.append((abs(dx), Facing.LEFT))
+
+    if dy > 0:
+        candidates.append((abs(dy), Facing.UP))
+    elif dy < 0:
+        candidates.append((abs(dy), Facing.DOWN))
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+
+    for _, direction in candidates:
+        step_x, step_y = direction.delta
+        next_pos = (x + step_x, y + step_y)
+
+        if next_pos not in obstacles:
+            return direction
+
+    return current_facing
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +362,104 @@ class SentryState(Enum):
 def decide(sensor, state, hp, heat):
     """TODO(Q5)：纯函数决策，返回 (action: str, new_state: SentryState)；
     sensor 字段契约、R1-R7 规则表与非法输入处理见题面 Q5 规范。"""
-    raise NotImplementedError("Q5 decide：题面 Q5·决策规则表 R1-R7")
+
+    required = {"enemy_frames", "enemy_dist", "robot_type", "max_hp"}
+
+    if not isinstance(sensor, dict) or not required.issubset(sensor):
+        raise ValueError("sensor 缺少必要字段")
+
+    if not isinstance(state, SentryState):
+        raise ValueError("state 非法")
+
+    frames = sensor["enemy_frames"]
+
+    if isinstance(frames, (tuple, list)):
+        if len(frames) == 0 or len(frames) > 6:
+            raise ValueError("enemy_frames 长度非法")
+        frames = tuple(bool(x) for x in frames)
+    else:
+        frames = (bool(frames),)
+
+    robot_type = sensor["robot_type"]
+    if robot_type not in ("INFANTRY", "HERO"):
+        robot_type = "INFANTRY"
+
+    enemy_dist = sensor["enemy_dist"]
+    if type(enemy_dist) is not int or enemy_dist < 0:
+        enemy_dist = float("inf")
+
+    try:
+        max_hp = int(sensor["max_hp"])
+    except (TypeError, ValueError):
+        max_hp = 1
+
+    if max_hp <= 0:
+        max_hp = 1
+
+    try:
+        hp_value = int(hp)
+    except (TypeError, ValueError):
+        hp_value = 0
+
+    hp_pct = int(hp_value / max_hp * 100)
+    hp_pct = max(0, min(100, hp_pct))
+
+    visible = frames[-1]
+
+    # R1：血量低，优先撤退
+    if hp_pct <= 30:
+        return ("RETREAT", SentryState.RETREAT)
+
+    # R2：撤退状态恢复后返航
+    if state is SentryState.RETREAT:
+        return ("RETURN", SentryState.RETURN)
+
+    # R3：RETURN 只保持一帧
+    if state is SentryState.RETURN:
+        return ("MOVE_BASE", SentryState.PATROL)
+
+    # R4 / R5：正在交火
+    if state is SentryState.ENGAGE:
+        if visible:
+            if enemy_dist <= 3:
+                return ("SHOOT", SentryState.ENGAGE)
+
+            if robot_type == "HERO":
+                return ("MOVE_RIGHT", SentryState.ENGAGE)
+
+            return ("MOVE_LEFT", SentryState.ENGAGE)
+
+        # 刚刚才丢失目标
+        if len(frames) >= 2 and frames[-2]:
+            return ("HOLD_FIRE", SentryState.ENGAGE)
+
+        # 连续看不到
+        return ("SCAN", SentryState.SUSPECT)
+
+    # R6：巡逻/怀疑状态发现敌人
+    if visible:
+        confirmed = (
+            len(frames) >= 2
+            and frames[-1]
+            and frames[-2]
+        )
+
+        if confirmed:
+            if enemy_dist <= 3:
+                return ("SHOOT", SentryState.ENGAGE)
+
+            if robot_type == "HERO":
+                return ("MOVE_RIGHT", SentryState.ENGAGE)
+
+            return ("MOVE_LEFT", SentryState.ENGAGE)
+
+        return ("SCAN", SentryState.SUSPECT)
+
+    # R7：默认行为
+    if state is SentryState.PATROL:
+        return ("PATROL_MOVE", SentryState.PATROL)
+
+    return ("SCAN", SentryState.SUSPECT)
 
 
 # ---------------------------------------------------------------------------
@@ -201,12 +468,153 @@ def decide(sensor, state, hp, heat):
 def run_patrol(grid, max_steps=500):
     """TODO(Q6)：sense → decide → act 主循环；
     循环结构、终止条件、脱困自由度与统计返回契约见题面 Q6 规范。"""
-    raise NotImplementedError("Q6 run_patrol：题面 Q6·主循环与统计契约")
+    from collections import deque
+
+    steps = 0
+    visited = {grid.current_pos}
+    escape_path = []
+
+    def manhattan(a, b):
+        return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+    def find_escape_path(start, target):
+        queue = deque([start])
+        parent = {start: (None, None)}
+
+        directions = (
+            Facing.UP,
+            Facing.DOWN,
+            Facing.LEFT,
+            Facing.RIGHT
+        )
+
+        while queue:
+            current = queue.popleft()
+
+            if current == target:
+                break
+
+            for direction in directions:
+                dx, dy = direction.delta
+                nxt = (current[0] + dx, current[1] + dy)
+
+                if grid.is_blocked(*nxt):
+                    continue
+
+                if nxt in parent:
+                    continue
+
+                parent[nxt] = (current, direction)
+                queue.append(nxt)
+
+        if target not in parent:
+            return []
+
+        path = []
+        current = target
+
+        while current != start:
+            previous, direction = parent[current]
+            path.append(direction)
+            current = previous
+
+        path.reverse()
+        return path
+
+    def face_direction(direction):
+        order = {
+            Facing.UP: 0,
+            Facing.RIGHT: 1,
+            Facing.DOWN: 2,
+            Facing.LEFT: 3
+        }
+
+        difference = (
+            order[direction] - order[grid.facing]
+        ) % 4
+
+        if difference == 1:
+            grid.turn_right()
+        elif difference == 2:
+            grid.turn_right()
+            grid.turn_right()
+        elif difference == 3:
+            grid.turn_left()
+
+    while (
+        steps < max_steps
+        and grid.fuel > 0
+        and not grid.found_enemy
+    ):
+        position = grid.current_pos
+
+        if escape_path:
+            direction = escape_path.pop(0)
+
+        else:
+            direction = next_step_toward(
+                position,
+                grid.enemy_pos,
+                grid.obstacles,
+                grid.facing
+            )
+
+            dx, dy = direction.delta
+            next_pos = (
+                position[0] + dx,
+                position[1] + dy
+            )
+
+            current_distance = manhattan(
+                position,
+                grid.enemy_pos
+            )
+
+            next_distance = manhattan(
+                next_pos,
+                grid.enemy_pos
+            )
+
+            greedy_ok = (
+                not grid.is_blocked(*next_pos)
+                and next_distance < current_distance
+            )
+
+            if not greedy_ok:
+                escape_path = find_escape_path(
+                    position,
+                    grid.enemy_pos
+                )
+
+                if not escape_path:
+                    break
+
+                direction = escape_path.pop(0)
+
+        face_direction(direction)
+        grid.move_forward()
+
+        steps += 1
+        visited.add(grid.current_pos)
+
+    success = grid.found_enemy
+
+    return {
+        "steps": steps,
+        "collisions": grid.collision_count,
+        "visited_count": len(visited),
+        "found_enemy": success,
+        "success": success
+    }
 
 
 def report_to_json(stats):
     """TODO(Q6)：把 stats 序列化为确定性的 JSON 字符串，见题面 Q6 规范。"""
-    raise NotImplementedError("Q6 report_to_json：题面 Q6·报告序列化")
+    return json.dumps(
+        stats,
+        sort_keys=True,
+        separators=(",", ":")
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -214,12 +622,50 @@ def report_to_json(stats):
 # ---------------------------------------------------------------------------
 def bfs_path_length(start, target, obstacles):
     """TODO(Bonus)：BFS 全局最短路步数；返回语义与边界职责见题面 Bonus 规范。"""
-    raise NotImplementedError("Bonus bfs_path_length")
+    from collections import deque
 
+    if start == target:
+        return 0
 
+    obstacles = set(obstacles)
+
+    if target in obstacles:
+        return -1
+
+    queue = deque([(start, 0)])
+    visited = {start}
+
+    while queue:
+        current, distance = queue.popleft()
+
+        x, y = current
+
+        neighbors = [
+            (x + 1, y),
+            (x - 1, y),
+            (x, y + 1),
+            (x, y - 1)
+        ]
+
+        for nxt in neighbors:
+            if nxt in obstacles:
+                continue
+
+            if nxt in visited:
+                continue
+
+            if nxt == target:
+                return distance + 1
+
+            visited.add(nxt)
+            queue.append((nxt, distance + 1))
+
+    return -1
 # ---------------------------------------------------------------------------
 # 渲染（已提供，demo 专用，不进测试）
 # ---------------------------------------------------------------------------
+
+
 def render_frame(grid, trail=()):
     """ASCII 渲染一帧战场；trail 为走过的格子集合。返回 list[str]。"""
     trail = set(trail)
